@@ -1,6 +1,13 @@
 饮食记录 · 使用说明
 ==============================
 
+零、你现在用 GitHub Pages 更新（eh338.github.io/diet-app）
+1. 解压「饮食记录-app.zip」，确认 index.html 在文件夹根目录（不要再套一层子文件夹）。
+2. 打开仓库 eh338/diet-app → Add file → Upload files，把文件夹里的全部文件拖进去覆盖，然后 Commit changes。
+3. 等 1–2 分钟，手机刷新页面。若仍是旧界面，把页面彻底关掉重开，或在浏览器设置里清一次该站点的缓存。
+4. 同一个域名下 localStorage 不变，历史记录、体重、目标、自建食物都不会丢。
+5. 不要删除 icon-192.png / icon-512.png，否则已添加到桌面的图标可能变成白块。
+
 一、三步上线（Netlify Drop，免费）
 1. 解压「饮食记录-app.zip」，得到一个文件夹。文件夹里应直接看到 index.html、app.js、data.js、manifest.json、sw.js 和两个图标，不要再套一层子文件夹。
 2. 电脑浏览器打开 https://app.netlify.com/drop ，把整个文件夹拖进去。

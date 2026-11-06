@@ -228,6 +228,51 @@ details[open] summary::before{content:"▾ "}
 details .bd{font-size:12px;color:var(--sub);line-height:1.65;padding-top:6px}
 input[type=date]{min-width:0}
 
+/* ===== v2 视觉：色块分区 / 环形 / 图标 ===== */
+:root{
+  --pro:#3b82f6; --fat:#f0a132; --carb:#10b981; --fiber:#8b5cf6;
+  --na-c:#e0533d; --k-c:#0ea5b7;
+  --pro-soft:#eaf1fe; --fat-soft:#fdf1e2; --carb-soft:#e7f7f0;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --pro:#8ab4ff; --fat:#f5c26b; --carb:#5ed3a0; --fiber:#c4b5fd;
+    --pro-soft:#182233; --fat-soft:#2b2418; --carb-soft:#12291f;
+  }
+}
+.hero{background:linear-gradient(140deg,var(--soft) 0%,var(--card) 64%);overflow:hidden}
+.hero-in{display:flex;align-items:center;gap:12px}
+.hero-l{flex:1;min-width:0}
+.hero-tag{display:inline-flex;align-items:center;gap:4px;background:color-mix(in srgb,var(--brand) 14%,transparent);color:var(--brand-2);border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600}
+.hero-k{font-size:34px;font-weight:700;line-height:1.05;letter-spacing:-.6px;font-variant-numeric:tabular-nums;margin-top:7px}
+.hero-k span{font-size:13px;font-weight:400;color:var(--sub);letter-spacing:0}
+.hero-sub{font-size:12px;color:var(--sub);margin-top:3px}
+.ring{width:104px;height:104px;flex:0 0 104px}
+.ring svg{width:104px;height:104px;display:block}
+.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:13px}
+.mcell{background:var(--card2);border-radius:11px;padding:9px 9px 8px}
+.mcell .lb{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--sub)}
+.mcell .lb i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.mcell .v{font-size:17px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.mcell .v small{font-size:10px;color:var(--sub);font-weight:400;margin-left:1px}
+.mcell .b .bar{height:5px;margin-top:5px}
+.stat-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:9px}
+.pill{display:inline-flex;align-items:center;gap:4px;background:var(--card2);border-radius:999px;padding:2px 8px;font-size:11px}
+.meal-h .l{gap:10px}
+.meal-ic{flex:0 0 32px;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--soft)}
+.mi-breakfast{background:var(--fat-soft)}
+.mi-lunch{background:var(--carb-soft)}
+.mi-dinner{background:var(--blue-soft)}
+.mi-snack{background:var(--card2)}
+.mealsum{font-size:11px;color:var(--sub);margin-top:1px}
+.details-compact{border-top:1px dashed var(--line);margin-top:10px;padding-top:2px}
+.details-compact summary{font-size:11px;color:var(--sub);padding:5px 0}
+.details-compact summary::before{content:"＋ "}
+.details-compact[open] summary::before{content:"－ "}
+.card h3 .ic{font-size:14px;margin-right:4px}
+.macro-inline{font-size:11px;color:var(--sub);margin-top:-2px}
+
+
 /* evidence + plans + exercise */
 .ev{display:inline-block;border-radius:6px;padding:1px 6px;font-size:10px;line-height:17px;white-space:nowrap}
 .ev-strong{background:var(--soft);color:var(--brand-2)}

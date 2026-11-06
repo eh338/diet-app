@@ -48,6 +48,10 @@ const SRC = {
   }
 };
 
+/* data.js 使用 CFCT6/USDA 等原始代码，这里统一映射为界面代码；旧记录里的原始代码也能正常显示 */
+const SRC_ALIAS = { CFCT6: 'CT', USDA: 'USD', COFID: 'CT' };
+const srcKey = s => SRC_ALIAS[s] || s || 'USR';
+
 /* ---------------- 文献库（均已用 PubMed 核对，2026-11-05） ---------------- */
 const CITES = {
   mifflin: {
@@ -328,6 +332,7 @@ const DISH_AS_FOOD = (DISHES || []).map(d => {
 let DB = [];
 function rebuildDB() {
   DB = (typeof FOODS !== 'undefined' ? FOODS : []).concat(DISH_AS_FOOD, state.custom.map(c => Object.assign({ cat: '自建', st: '生', src: 'USR' }, c)));
+  DB.forEach(f => { f.src = srcKey(f.src); });
 }
 rebuildDB();
 const foodByName = n => DB.find(f => f.n === n) || { n, pro: 0, kcal: 0 };
@@ -583,10 +588,29 @@ function bar(pct, cls) {
   const p = clamp(pct, 0, 100);
   return `<div class="bar"><i class="${cls || ''}" style="width:${p}%"></i></div>`;
 }
-function macroRow(label, val, target, unit) {
+const MEAL_ICON = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
+function barC(pct, color) {
+  const p = clamp(pct, 0, 100);
+  return `<div class="bar"><i style="width:${p}%;background:${color}"></i></div>`;
+}
+function macroCell(label, val, target, color, unit) {
   const pct = target ? val / target * 100 : 0;
-  let cls = pct > 105 ? 'over' : (pct < 70 ? 'warn' : '');
-  return `<div class="macro"><span class="nm">${label}</span>${bar(pct, cls)}<span class="val"><b>${round(val)}</b>/${target ? Math.round(target) : '—'}${unit}</span></div>`;
+  return `<div class="mcell">
+    <div class="lb"><i style="background:${color}"></i>${label}</div>
+    <div class="v">${round(val)}<small>/${target ? Math.round(target) : '—'}${unit || 'g'}</small></div>
+    <div class="b">${barC(pct, color)}</div>
+  </div>`;
+}
+function ringSVG(pct, big, small) {
+  const p = clamp(pct, 0, 100), C = 2 * Math.PI * 44;
+  const col = pct > 100 ? 'var(--danger)' : 'var(--brand)';
+  return `<svg viewBox="0 0 104 104" role="img" aria-label="热量进度 ${Math.round(pct)}%">
+    <circle cx="52" cy="52" r="44" fill="none" stroke="var(--card2)" stroke-width="10"/>
+    <circle cx="52" cy="52" r="44" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round"
+      stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p / 100)}" transform="rotate(-90 52 52)"/>
+    <text x="52" y="50" text-anchor="middle" font-size="19" font-weight="700" fill="var(--text)">${big}</text>
+    <text x="52" y="67" text-anchor="middle" font-size="10" fill="var(--sub)">${small}</text>
+  </svg>`;
 }
 function naBar(label, val, target, unit) {
   const pct = target ? val / target * 100 : 0;
@@ -620,7 +644,7 @@ function sourceCard(f) {
     <div class="hd"><span class="tag src-${f.src}">${s.tag}</span><span class="nm">${esc(s.name)}</span></div>
     <div class="ln">版本：${esc(s.ver)}</div>
     <div class="ln">许可：${esc(s.lic)}</div>
-    <div class="ln">口径：${esc(s.note)}</div>
+    <div class="ln">${esc(s.note)}</div>
     <div class="ln">可食部 ${f.ed == null ? 100 : f.ed}% · 状态：${esc(f.st || '生')}</div>
     ${s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${s.url}</a>` : ''}
     ${extra}
@@ -631,12 +655,15 @@ function sourceCard(f) {
 function viewToday() {
   const t = targets(), d = daySummary(S.date), dr = S.date !== todayISO();
   const left = Math.round(t.kcal - d.kcal);
+  const pct = t.kcal ? d.kcal / t.kcal * 100 : 0;
+  const modeTxt = t.mode === 'cut' ? '减脂 -' + t.deficitPct + '%' : t.mode === 'bulk' ? '增肌 +' + state.profile.surplus + '%' : '维持';
+  const modeIc = t.mode === 'cut' ? '🎯' : t.mode === 'bulk' ? '💪' : '⚖️';
   const mealsHtml = MEALS.map(([m, name]) => {
     const ms = mealSummary(S.date, m);
     const es = d.entries.filter(e => e.m === m);
     return `<div class="card meal">
-      <div class="meal-h"><div class="l"><span class="dot"></span><div><h3 class="title-s">${name}</h3>
-      <div class="sum">${ms.kcal} kcal · 蛋白 ${round(ms.pro, 1)} g</div></div></div>
+      <div class="meal-h"><div class="l"><span class="meal-ic mi-${m}">${MEAL_ICON[m]}</span><div><h3 class="title-s">${name}</h3>
+      <div class="mealsum">${ms.kcal} kcal · 蛋白 ${round(ms.pro, 1)} g</div></div></div>
       <button class="add-mini" data-act="goAdd" data-meal="${m}" aria-label="加${name}">＋</button></div>
       ${es.length ? es.map(e => entryRow(e)).join('') : `<div class="empty">还没有${name}记录</div>`}
     </div>`;
@@ -644,7 +671,7 @@ function viewToday() {
 
   return `
   <div class="top">
-    <div><h1>${dr ? '这一天吃了什么' : '今天吃了什么'}</h1>
+    <div><h1>${dr ? '📅 这一天' : '🍽 今天吃了什么'}</h1>
       <div class="date">${fmtDate(S.date)}${dr ? ' · <button class="link" data-act="today">回到今天</button>' : ''}</div>
     </div>
     <div class="act">
@@ -653,42 +680,55 @@ function viewToday() {
     </div>
   </div>
   <div class="view">
-    <div class="card">
-      <div class="row"><span class="muted">摄入 / 目标</span><button class="link" data-act="energySheet">消耗明细 ›</button></div>
-      <div class="sum-head"><span class="kcal-big">${Math.round(d.kcal)}</span><span class="kcal-of">/ ${t.kcal} kcal</span></div>
-      ${bar(d.kcal / t.kcal * 100, d.kcal > t.kcal ? 'over' : '')}
-      <div class="row" style="margin-top:6px"><span class="muted">${left > 0 ? '还可吃 ' + left + ' kcal' : '已超出 ' + Math.abs(left) + ' kcal'}</span>
-        <span class="muted">${t.mode === 'cut' ? '减脂 -' + t.deficitPct + '%' : t.mode === 'bulk' ? '增肌 +' + state.profile.surplus + '%' : '维持'}</span></div>
-      <div style="margin-top:12px">
-        ${macroRow('蛋白质', d.pro, t.protein, 'g')}
-        ${macroRow('脂肪', d.fat, t.fat, 'g')}
-        ${macroRow('碳水', d.carb, t.carb, 'g')}
+    <div class="card hero">
+      <div class="row">
+        <span class="hero-tag">${modeIc} ${modeTxt}</span>
+        <button class="link" data-act="energySheet">消耗明细 ›</button>
       </div>
-      <div class="mini-bars">
-        <div><div class="muted">钠（上限）</div>${naBar('钠', d.na, naPlan().limit, 'mg')}</div>
-        <div><div class="muted">钾（目标 ${naPlan().k} mg）</div>${naBar('钾', d.k, naPlan().k, 'mg')}</div>
+      <div class="hero-in" style="margin-top:9px">
+        <div class="hero-l">
+          <div class="hero-k">${Math.round(d.kcal)}<span> / ${t.kcal} kcal</span></div>
+          <div class="hero-sub">${left > 0 ? `还可吃 <b style="color:var(--brand-2)">${left}</b> kcal` : `已超出 <b style="color:var(--danger)">${Math.abs(left)}</b> kcal`}</div>
+        </div>
+        <div class="ring">${ringSVG(pct, Math.round(pct) + '%', '目标进度')}</div>
       </div>
-      <div class="row" style="margin-top:8px"><span class="muted">钠钾比 ${d.k ? round(d.na / d.k, 2) : '—'}（越低越好）</span>
-        <button class="link" data-act="naSheet">钠钾详情 ›</button></div>
+      <div class="mgrid">
+        ${macroCell('蛋白质', d.pro, t.protein, 'var(--pro)')}
+        ${macroCell('脂肪', d.fat, t.fat, 'var(--fat)')}
+        ${macroCell('碳水', d.carb, t.carb, 'var(--carb)')}
+      </div>
+      <details class="details-compact">
+        <summary>钠钾与依据</summary>
+        <div class="mini-bars" style="border-top:0;padding-top:6px;margin-top:0">
+          <div><div class="muted">钠（上限 ${naPlan().limit} mg）</div>${naBar('钠', d.na, naPlan().limit, 'mg')}</div>
+          <div><div class="muted">钾（目标 ${naPlan().k} mg）</div>${naBar('钾', d.k, naPlan().k, 'mg')}</div>
+        </div>
+        <div class="row" style="margin-top:6px"><span class="muted">钠钾比 ${d.k ? round(d.na / d.k, 2) : '—'}（越低越好）</span>
+          <button class="link" data-act="naSheet">钠钾详情 ›</button></div>
+        <div class="muted" style="margin-top:5px">依据：WHO 成人钠 &lt;2000 mg/天、钾 ≥3510 mg/天；个性化分层见「钠钾详情」。</div>
+      </details>
     </div>
     ${t.warnings.length ? `<div class="guard">${t.warnings.map(esc).join('<br>')}</div>` : ''}
     <div class="card" id="todayAdvice">
-      <div class="row"><h3 class="title-s">今日提示</h3><span class="muted">按 ${t.kcal} kcal / 蛋白 ${t.protein} g 目标</span></div>
-      ${dailyAdvice().slice(0, 3).map(advRow).join('') || '<div class="empty">先记一餐，提示会更具体</div>'}
+      <div class="row"><h3 class="title-s"><span class="ic">💡</span>今日提示</h3><span class="pill">蛋白目标 ${t.protein} g</span></div>
+      ${(() => { const a = dailyAdvice(); return a.length ? advRow(a[0]) + (a.length > 1 ? `<details class="details-compact"><summary>更多提示（${Math.min(a.length - 1, 3)}）</summary>${a.slice(1, 4).map(advRow).join('')}</details>` : '') : '<div class="empty">先记一餐，提示会更具体</div>'; })()}
     </div>
     <div class="card tight">
-      <div class="row"><h3 class="title-s">按目标推荐餐单</h3><span class="tag src-CT">证据分级</span></div>
-      <div class="muted" style="margin-top:4px">按${t.mode === 'cut' ? '减脂' : t.mode === 'bulk' ? '增肌' : '维持'}目标、今天剩余额度和忌口，给早/午/晚/练前搭配；每套营养由食物库逐项累加。</div>
-      <button class="btn sm block" style="margin-top:10px" data-act="plan">生成今天的餐单 ›</button>
+      <div class="row"><h3 class="title-s"><span class="ic">🥗</span>按目标推荐餐单</h3><span class="tag src-CT">证据分级</span></div>
+      <button class="btn sm block" style="margin-top:9px" data-act="plan">生成今天的餐单 ›</button>
+      <details class="details-compact">
+        <summary>说明与依据</summary>
+        <div class="muted">按${t.mode === 'cut' ? '减脂' : t.mode === 'bulk' ? '增肌' : '维持'}目标、今天剩余额度和忌口，给早/午/晚/练前搭配；每套营养由食物库逐项累加，每样食物挂证据等级（强/中/弱/负）。</div>
+      </details>
     </div>
     ${mealsHtml}
     <div class="card tight">
-      <div class="row"><h3 class="title-s">快速添加</h3><button class="link" data-act="goFood">搜索全部 ›</button></div>
+      <div class="row"><h3 class="title-s"><span class="ic">⚡</span>快速添加</h3><button class="link" data-act="goFood">搜索全部 ›</button></div>
       <div class="quick-wrap">${quickChips()}</div>
       <div class="quick-wrap" style="margin-top:10px">
-        <button class="btn tiny" data-act="addOil">＋ 油 1 勺（10g）</button>
-        <button class="btn tiny" data-act="customFood">＋ 自建食物</button>
-        <button class="btn tiny" data-act="scan">扫条码</button>
+        <button class="btn tiny" data-act="addOil">🥄 油 1 勺（10g）</button>
+        <button class="btn tiny" data-act="customFood">✏️ 自建食物</button>
+        <button class="btn tiny" data-act="scan">📷 扫条码</button>
       </div>
     </div>
   </div>`;
@@ -697,7 +737,7 @@ function entryRow(e) {
   const r = e.g / 100;
   return `<div class="item" data-act="editEntry" data-id="${e.id}">
     <div class="nm"><p>${esc(e.n)} ${e.edited ? '<span class="tag" style="background:var(--warn-soft);color:var(--warn)">已改</span>' : ''}</p>
-      <span>${e.g} g · ${SRC[e.src] ? SRC[e.src].tag : ''} · 蛋白 ${round(e.base.pro * r, 1)}g</span></div>
+      <span>${e.g} g · ${SRC[srcKey(e.src)] ? SRC[srcKey(e.src)].tag : ''} · 蛋白 ${round(e.base.pro * r, 1)}g</span></div>
     <div class="kc"><b>${Math.round(e.base.kcal * r)}</b> kcal</div>
   </div>`;
 }
@@ -715,12 +755,12 @@ function advRow(a) {
 
 /* ================= 食物页 ================= */
 function viewFood() {
-  return `<div class="top"><div><h1>食物库</h1><div class="date">本地 ${DB.length} 条 · 断网可用</div></div>
-    <div class="act"><button class="icon-btn" data-act="scan">⌗</button><button class="icon-btn" data-act="customFood">＋</button></div></div>
+  return `<div class="top"><div><h1>🔍 食物库</h1><div class="date">本地 ${DB.length} 条 · 断网可用</div></div>
+    <div class="act"><button class="icon-btn" data-act="scan">📷</button><button class="icon-btn" data-act="customFood">＋</button></div></div>
   <div class="view">
     <div class="search"><div class="search-box">
       <input id="q" type="search" placeholder="搜名称 / 别名 / 拼音首字母（如 jxr）" value="${esc(S.q)}" autocomplete="off">
-      <button class="scan" data-act="scan" aria-label="扫码">⌗</button>
+      <button class="scan" data-act="scan" aria-label="扫码">📷</button>
     </div></div>
     <div class="chips" id="srcChips">${[['all', '全部来源'], ['CT', '成分表'], ['USD', 'USDA'], ['OFF', '开源库'], ['USR', '自建'], ['EST', '家常菜估算']]
       .map(([k, n]) => `<button class="chip ${S.srcFilter === k ? 'on' : ''}" data-act="setSrc" data-v="${k}">${n}</button>`).join('')}</div>
@@ -748,7 +788,7 @@ function resultsHtml() {
 function foodRow(f) {
   const p = round(f.pro);
   return `<div class="food-row" data-act="foodDetail" data-name="${esc(f.n)}">
-    <div class="nm"><p>${esc(f.n)} ${srcTag(f)} ${f.dish ? '<span class="tag est">估算</span>' : ''}</p>
+    <div class="nm"><p>${esc(f.n)} ${srcTag(f)}</p>
       <div class="sub">${f.cat} · ${esc(f.st || '生')} · 蛋白 ${p}g</div></div>
     <div class="k"><b>${Math.round(f.kcal)}</b><span>kcal/100g</span></div>
   </div>`;
@@ -837,7 +877,7 @@ function viewHistory() {
   const t = targets();
   const wIn = week.reduce((a, b) => a + b.s.kcal, 0);
   const foodHist = S.histFood ? foodHistory(S.histFood) : null;
-  return `<div class="top"><div><h1>历史</h1><div class="date">按天回看 · 最近 7 天平均 ${Math.round(wIn / 7)} kcal</div></div>
+  return `<div class="top"><div><h1>📅 历史</h1><div class="date">按天回看 · 最近 7 天平均 ${Math.round(wIn / 7)} kcal</div></div>
     <div class="act"><button class="icon-btn" data-act="pickDate">📅</button></div></div>
   <div class="view">
     <div class="card">
@@ -850,7 +890,9 @@ function viewHistory() {
         <span><i style="background:color-mix(in srgb,var(--brand) 36%,var(--card))"></i>达标</span>
         <span><i style="background:var(--danger-soft)"></i>超目标</span>
         <span><i style="background:var(--warn);width:4px;height:4px;border-radius:50%"></i>改过</span></div>
-      <div class="muted" style="margin-top:8px">格子里的数字是当天摄入 kcal。点某天看明细，明细里可改克数或删除。</div>
+      <details class="details-compact" style="border-top:0;margin-top:4px"><summary>日历怎么读</summary>
+        <div class="muted">格子里的数字是当天摄入 kcal。点某天看明细，明细里可改克数或删除。</div>
+      </details>
     </div>
     <div class="card" id="dayDetail">${dayDetailHtml(d)}</div>
     <div class="card">
@@ -987,27 +1029,30 @@ function weightStats() {
 function viewWeight() {
   const ws = weightStats(), t = targets();
   const p = state.profile;
-  return `<div class="top"><div><h1>体重</h1><div class="date">晨起空腹 + 晚间，双记录更好判读</div></div>
+  return `<div class="top"><div><h1>⚖️ 体重</h1><div class="date">晨起空腹 + 晚间，双记录更好判读</div></div>
     <div class="act"><button class="icon-btn" data-act="addWeight" data-t="am">晨</button><button class="icon-btn" data-act="addWeight" data-t="pm">晚</button></div></div>
   <div class="view">
-    <div class="card">
+    <div class="card hero">
       <div class="kv">
         <div><b>${ws.w7 != null ? ws.w7 : '—'} kg</b><span>7 天晨重均值</span></div>
         <div><b>${ws.w14 != null ? ws.w14 : '—'} kg</b><span>14 天均值</span></div>
         <div><b>${ws.slope != null ? (ws.slope > 0 ? '+' : '') + ws.slope + '%' : '—'}</b><span>趋势斜率 / 周</span></div>
         <div><b>${ws.avgDelta != null ? ws.avgDelta : '—'} kg</b><span>日内波动（晚−晨）</span></div>
       </div>
-      <div class="muted">晨重是基准：看 7 天均线和斜率，不看单日。日内波动主要来自当天摄入、水分与排汗，不是脂肪。</div>
       <div class="quick-wrap" style="margin-top:10px">
         <button class="btn sm" data-act="addWeight" data-t="am">记晨起空腹</button>
         <button class="btn sm ghost" data-act="addWeight" data-t="pm">记晚间</button>
         <button class="btn sm ghost" data-act="addWaist">记腰围</button>
       </div>
-      <div class="muted" style="margin-top:8px">同一台秤、同一位置、尽量同一时刻称；晨起为空腹排尿后。</div>
+      <details class="details-compact">
+        <summary>怎么读这些数字</summary>
+        <div class="muted">晨重是基准：看 7 天均线和斜率，不看单日。日内波动主要来自当天摄入、水分与排汗，不是脂肪。</div>
+        <div class="muted" style="margin-top:5px">同一台秤、同一位置、尽量同一时刻称；晨起为空腹排尿后。</div>
+      </details>
     </div>
     <div class="card">
       <div class="row"><h3 class="title-s">晨重趋势（30 天）</h3><span class="muted">散点 + 7 日均线</span></div>
-      <div class="chart-wrap">${chartSVG({
+      ${ws.logged ? `<div class="chart-wrap">${chartSVG({
         n: ws.ser.length, height: 160,
         series: [
           { points: ws.am.map((v, i) => ({ i, y: v })), color: 'var(--sub)', dots: true, w: 0 },
@@ -1015,7 +1060,7 @@ function viewWeight() {
         ], xLabels: ws.ser.map((x, i) => i % 5 === 0 ? x.d.slice(5) : '')
       })}</div>
       <div class="legend-row"><span><i class="kdot" style="background:var(--sub)"></i>晨重</span><span><i class="kdot" style="background:var(--brand)"></i>7 日均线</span>
-        ${ws.slope != null ? `<span>趋势 ${ws.slope > 0 ? '+' : ''}${ws.slope}% 体重/周</span>` : ''}</div>
+        ${ws.slope != null ? `<span>趋势 ${ws.slope > 0 ? '+' : ''}${ws.slope}% 体重/周</span>` : ''}</div>` : '<div class="empty">还没有体重记录，点上方「记晨起空腹」开始</div>'}
     </div>
     <div class="card">
       <div class="row"><h3 class="title-s">日内波动（晚 − 晨）</h3><span class="muted">${ws.avgDelta != null ? '均值 ' + ws.avgDelta + ' kg' : '暂无'}</span></div>
@@ -1097,10 +1142,10 @@ function viewEnergy() {
   const modeName = { cut: '减脂', bulk: '增肌', keep: '维持' }[t.mode];
   const confMap = { high: ['高', 'var(--brand)'], mid: ['中', 'var(--warn)'], low: ['低', 'var(--danger)'] };
   const confTxt = cal.ok ? confMap[cal.conf] : null;
-  return `<div class="top"><div><h1>我的消耗</h1><div class="date">${fmtDate(todayISO())} · 估算值，用体重趋势校准</div></div>
+  return `<div class="top"><div><h1>🔥 我的消耗</h1><div class="date">${fmtDate(todayISO())} · 估算值，用体重趋势校准</div></div>
     <div class="act"><button class="icon-btn" data-act="back">‹</button></div></div>
   <div class="view">
-    <div class="card">
+    <div class="card hero">
       <div class="row"><span class="muted">今日总消耗（TDEE）</span>
         <span class="tag ${cal.ok ? (cal.conf === 'high' ? 'src-CT' : cal.conf === 'mid' ? 'src-OFF' : 'src-EST') : 'src-USR'}">${cal.ok ? '已用 ' + cal.win + ' 天校准·可信度' + confTxt[0] : '公式估算·未校准'}</span></div>
       <div class="sum-head"><span class="kcal-big">${m.value}</span><span class="kcal-of">± ${m.calibrated ? Math.round((m.high - m.low) / 2) : Math.round(m.value * 0.12)} kcal</span></div>
@@ -1121,7 +1166,10 @@ function viewEnergy() {
       <div class="muted" style="margin-top:8px">${e.separate
         ? '当前：活动系数只算日常走动（×' + e.factor + '），运动按当天记录单独加。两者不会重复计算。'
         : '当前：活动系数（×' + e.factor + '）已经包含规律运动，因此今天的运动记录<b>不再叠加</b>，只作为记录保留。'}</div>
-      <div class="muted" style="margin-top:4px">两种模式只能选一种。默认建议“单独累加”：更直观，也不会把运动算两遍。</div>
+      <details class="details-compact">
+        <summary>两种模式怎么选</summary>
+        <div class="muted">两种模式只能选一种。默认建议“单独累加”：更直观，也不会把运动算两遍。</div>
+      </details>
     </div>
     <div class="card">
       <div class="row"><h3 class="title-s">四项明细</h3><button class="link" data-act="editProfile">改资料 ›</button></div>
@@ -1179,9 +1227,9 @@ function viewMe() {
   const p = state.profile, t = targets(), n = naPlan(), m = maintenanceEstimate();
   const minor = +p.age > 0 && +p.age < 18;
   const modes = [['cut', '减脂'], ['bulk', '增肌'], ['keep', '维持']];
-  return `<div class="top"><div><h1>我的</h1><div class="date">目标 · 资料 · 备份 · 数据来源</div></div></div>
+  return `<div class="top"><div><h1>👤 我的</h1><div class="date">目标 · 资料 · 备份 · 数据来源</div></div></div>
   <div class="view">
-    <div class="card">
+    <div class="card hero">
       <div class="seg">${modes.map(([k, v]) => `<button class="${p.mode === k ? 'on' : ''}" data-act="setMode" data-v="${k}">${v}</button>`).join('')}</div>
       <div class="kv" style="margin-top:12px">
         <div><b>${t.kcal}</b><span>kcal 目标（建议 ${r10(t.kcal * .95)}–${r10(t.kcal * 1.05)}）</span></div>
@@ -1399,7 +1447,7 @@ function foodDetailSheet(name) {
   const presets = portionPresets(f);
   openSheet(`
     <div class="sheet-h"><div><h2>${esc(f.n)}</h2>
-      <div class="muted" style="margin-top:4px">${srcTag(f)} ${f.dish ? '<span class="tag est">估算值</span>' : ''} <span class="tag">${f.cat}</span> <span class="tag">${esc(f.st || '生')}</span></div></div>
+      <div class="muted" style="margin-top:4px">${srcTag(f)} <span class="tag">${f.cat}</span> <span class="tag">${esc(f.st || '生')}</span></div></div>
       <button class="x" data-act="closeSheet">×</button></div>
     <div class="muted">每 100 g 可食部</div>
     ${p}${dishInfo}
@@ -1722,7 +1770,7 @@ function viewPlan() {
   const p = state.profile, b = planBudget();
   const diet = p.diet || {};
   const mealOrder = ['breakfast', 'lunch', 'dinner', 'pre'];
-  return `<div class="top"><div><h1>今日餐单</h1><div class="date">按${p.mode === 'cut' ? '减脂' : p.mode === 'bulk' ? '增肌' : '维持'}目标 · 剩余 ${b.remK} kcal / 蛋白 ${b.remP} g</div></div>
+  return `<div class="top"><div><h1>🥗 今日餐单</h1><div class="date">按${p.mode === 'cut' ? '减脂' : p.mode === 'bulk' ? '增肌' : '维持'}目标 · 剩余 ${b.remK} kcal / 蛋白 ${b.remP} g</div></div>
     <div class="act"><button class="icon-btn" data-act="back">‹</button></div></div>
   <div class="view">
     <div class="card">
@@ -1932,7 +1980,7 @@ function exportCSV() {
   const rows = [['日期', '餐次', '食物', '克数(g)', '热量(kcal)', '蛋白质(g)', '脂肪(g)', '碳水(g)', '膳食纤维(g)', '钠(mg)', '钾(mg)', '来源', '是否修改']];
   state.entries.slice().sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : (a.ts || 0) - (b.ts || 0)).forEach(e => {
     const r = e.g / 100, b = e.base || {};
-    rows.push([e.d, MEAL_NAME[e.m] || e.m, e.n, e.g, Math.round((b.kcal || 0) * r), round((b.pro || 0) * r, 1), round((b.fat || 0) * r, 1), round((b.carb || 0) * r, 1), round((b.fib || 0) * r, 1), Math.round((b.na || 0) * r), Math.round((b.k || 0) * r), SRC[e.src] ? SRC[e.src].tag : e.src, e.edited ? '已改' : '']);
+    rows.push([e.d, MEAL_NAME[e.m] || e.m, e.n, e.g, Math.round((b.kcal || 0) * r), round((b.pro || 0) * r, 1), round((b.fat || 0) * r, 1), round((b.carb || 0) * r, 1), round((b.fib || 0) * r, 1), Math.round((b.na || 0) * r), Math.round((b.k || 0) * r), SRC[srcKey(e.src)] ? SRC[srcKey(e.src)].tag : (e.src || ''), e.edited ? '已改' : '']);
   });
   const csv = '\uFEFF' + rows.map(r => r.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(',')).join('\r\n');
   download('饮食记录-' + todayISO() + '.csv', csv, 'text/csv;charset=utf-8');
