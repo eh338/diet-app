@@ -34,9 +34,13 @@ const SRC = {
     note: '口径：每 100g，多为生重；部分条目为熟制', grade: 'A'
   },
   OFF: {
-    tag: '开源库', name: 'Open Food Facts', ver: '扫码实时查询（2026-11）',
+    tag: 'Open Food Facts', name: 'Open Food Facts', ver: '扫码实时查询（2026-11）',
     url: 'https://world.openfoodfacts.org/', lic: '数据库 ODbL 1.0，图片 CC-BY-SA',
-    note: '社区用户众包数据，条目准确度参差，建议与包装标签核对', grade: 'C'
+    note: '志愿者众包数据，条目准确度参差；以包装营养成分表为准', grade: 'C'
+  },
+  LABEL: {
+    tag: '包装标签', name: '包装营养成分表（手动录入）', ver: '用户抄录，未经验证',
+    url: '', lic: '仅存本机', note: '按包装标示值录入，可能因四舍五入与实物略有差异', grade: 'C'
   },
   USR: {
     tag: '自建', name: '用户自建 · 手动录入', ver: '本机保存，未经验证',
@@ -331,7 +335,7 @@ const DISH_AS_FOOD = (DISHES || []).map(d => {
 });
 let DB = [];
 function rebuildDB() {
-  DB = (typeof FOODS !== 'undefined' ? FOODS : []).concat(DISH_AS_FOOD, state.custom.map(c => Object.assign({ cat: '自建', st: '生', src: 'USR' }, c)));
+  DB = (typeof FOODS !== 'undefined' ? FOODS : []).concat(DISH_AS_FOOD, state.custom.map(c => Object.assign({ cat: '自建', st: '生', src: 'USR', custom: true }, c)));
   DB.forEach(f => { f.src = srcKey(f.src); });
 }
 rebuildDB();
@@ -340,7 +344,7 @@ const norm = s => String(s || '').toLowerCase().replace(/[()（）\s·・]/g, ''
 
 function searchFoods(q, filter) {
   q = norm(q);
-  let list = DB.filter(f => !filter || filter === 'all' || (f.src === filter));
+  let list = DB.filter(f => !filter || filter === 'all' || (filter === 'SCAN' ? f.custom : f.src === filter));
   if (!q) return list;
   const scored = [];
   for (const f of list) {
@@ -356,7 +360,7 @@ function searchFoods(q, filter) {
     else if (py.some(x => x.includes(q)) || pf.some(x => x.includes(q))) sc = 30;
     if (sc) scored.push([sc, f]);
   }
-  scored.sort((a, b) => b[0] - a[0] || a[1].n.length - b[1].n.length);
+  scored.sort((a, b) => b[0] - a[0] || (a[1].custom ? 1 : 0) - (b[1].custom ? 1 : 0) || a[1].n.length - b[1].n.length);
   return scored.map(x => x[1]);
 }
 
@@ -654,8 +658,10 @@ function sourceCard(f) {
 /* ================= 今天 ================= */
 function viewToday() {
   const t = targets(), d = daySummary(S.date), dr = S.date !== todayISO();
-  const left = Math.round(t.kcal - d.kcal);
-  const pct = t.kcal ? d.kcal / t.kcal * 100 : 0;
+  const exToday = exKcal(S.date);
+  const goalKcal = Math.round(t.kcal + exToday);
+  const left = Math.round(goalKcal - d.kcal);
+  const pct = goalKcal ? d.kcal / goalKcal * 100 : 0;
   const modeTxt = t.mode === 'cut' ? '减脂 -' + t.deficitPct + '%' : t.mode === 'bulk' ? '增肌 +' + state.profile.surplus + '%' : '维持';
   const modeIc = t.mode === 'cut' ? '🎯' : t.mode === 'bulk' ? '💪' : '⚖️';
   const mealsHtml = MEALS.map(([m, name]) => {
@@ -687,8 +693,8 @@ function viewToday() {
       </div>
       <div class="hero-in" style="margin-top:9px">
         <div class="hero-l">
-          <div class="hero-k">${Math.round(d.kcal)}<span> / ${t.kcal} kcal</span></div>
-          <div class="hero-sub">${left > 0 ? `还可吃 <b style="color:var(--brand-2)">${left}</b> kcal` : `已超出 <b style="color:var(--danger)">${Math.abs(left)}</b> kcal`}</div>
+          <div class="hero-k">${Math.round(d.kcal)}<span> / ${goalKcal} kcal</span></div>
+          <div class="hero-sub">${left > 0 ? `还可吃 <b style="color:var(--brand-2)">${left}</b> kcal` : `已超出 <b style="color:var(--danger)">${Math.abs(left)}</b> kcal`}${exToday > 0 ? `<span class="muted">（目标 ${t.kcal} + 运动 ${Math.round(exToday)}）</span>` : ''}</div>
         </div>
         <div class="ring">${ringSVG(pct, Math.round(pct) + '%', '目标进度')}</div>
       </div>
@@ -729,6 +735,7 @@ function viewToday() {
         <button class="btn tiny" data-act="addOil">🥄 油 1 勺（10g）</button>
         <button class="btn tiny" data-act="customFood">✏️ 自建食物</button>
         <button class="btn tiny" data-act="scan">📷 扫条码</button>
+        <button class="btn tiny" data-act="exercise">🔥 记运动</button>
       </div>
     </div>
   </div>`;
@@ -736,6 +743,7 @@ function viewToday() {
 function entryRow(e) {
   const r = e.g / 100;
   return `<div class="item" data-act="editEntry" data-id="${e.id}">
+    ${e.img ? `<img class="thumb" data-img="${esc(e.img)}" alt="">` : ''}
     <div class="nm"><p>${esc(e.n)} ${e.edited ? '<span class="tag" style="background:var(--warn-soft);color:var(--warn)">已改</span>' : ''}</p>
       <span>${e.g} g · ${SRC[srcKey(e.src)] ? SRC[srcKey(e.src)].tag : ''} · 蛋白 ${round(e.base.pro * r, 1)}g</span></div>
     <div class="kc"><b>${Math.round(e.base.kcal * r)}</b> kcal</div>
@@ -755,39 +763,70 @@ function advRow(a) {
 
 /* ================= 食物页 ================= */
 function viewFood() {
-  return `<div class="top"><div><h1>🔍 食物库</h1><div class="date">本地 ${DB.length} 条 · 断网可用</div></div>
+  const builtin = DB.filter(f => !f.custom).length;
+  return `<div class="top"><div><h1>🔍 食物库</h1><div class="date">内置 ${builtin} 条 · 自建/扫码 ${state.custom.length} 条 · 断网可用</div></div>
     <div class="act"><button class="icon-btn" data-act="scan">📷</button><button class="icon-btn" data-act="customFood">＋</button></div></div>
   <div class="view">
     <div class="search"><div class="search-box">
       <input id="q" type="search" placeholder="搜名称 / 别名 / 拼音首字母（如 jxr）" value="${esc(S.q)}" autocomplete="off">
       <button class="scan" data-act="scan" aria-label="扫码">📷</button>
     </div></div>
-    <div class="chips" id="srcChips">${[['all', '全部来源'], ['CT', '成分表'], ['USD', 'USDA'], ['OFF', '开源库'], ['USR', '自建'], ['EST', '家常菜估算']]
+    <div class="chips" id="srcChips">${[['all', '全部来源'], ['CT', '成分表'], ['USD', 'USDA'], ['OFF', 'Open Food Facts'], ['LABEL', '包装标签'], ['SCAN', '我的扫码'], ['USR', '自建'], ['EST', '家常菜估算']]
       .map(([k, n]) => `<button class="chip ${S.srcFilter === k ? 'on' : ''}" data-act="setSrc" data-v="${k}">${n}</button>`).join('')}</div>
-    <div class="chips" id="catChips">${['全部'].concat(Array.from(new Set(DB.map(f => f.cat))))
+    <div class="chips" id="catChips">${['全部', '我的扫码'].concat(Array.from(new Set(DB.filter(f => !f.custom).map(f => f.cat))))
       .map(c => `<button class="chip ${S.cat === c ? 'on' : ''}" data-act="setCat" data-v="${c}">${c}</button>`).join('')}</div>
     <div id="resultsWrap">${resultsHtml()}</div>
   </div>`;
 }
 function resultsHtml() {
   let list = searchFoods(S.q, S.srcFilter);
-  if (S.cat !== '全部') list = list.filter(f => f.cat === S.cat);
+  if (S.cat === '我的扫码') list = list.filter(f => f.custom);
+  else if (S.cat !== '全部') list = list.filter(f => f.cat === S.cat);
   if (!list.length) return `<div class="card noresult"><p>没找到「${esc(S.q)}」。别卡住：</p>
     <div class="quick-wrap" style="justify-content:center">
       <button class="btn sm" data-act="customFood">自己建一条</button>
       <button class="btn sm ghost" data-act="scan">扫条码</button>
     </div>
     <p style="margin-top:10px">也可以换拼音首字母试试，例如鸡胸肉 = jxr</p></div>`;
+  const nb = list.filter(f => !f.custom).length, nc = list.length - nb;
   const show = list.slice(0, 120);
   return `<div class="card tight" style="padding:4px 12px">
-    <div class="row" style="padding:6px 0"><span class="muted">共 ${list.length} 条${list.length > 120 ? '，只显示前 120 条' : ''}</span><span class="muted">点击查看来源并添加</span></div>
+    <div class="row" style="padding:6px 0"><span class="muted">共 ${list.length} 条（内置 ${nb} · 自建/扫码 ${nc}）${list.length > 120 ? '，只显示前 120 条' : ''}</span><span class="muted">点击查看来源并添加</span></div>
     <div>${show.map(f => foodRow(f)).join('')}</div>
   </div>
-  <div class="muted" style="padding:0 4px 10px">数据均为每 100g 可食部口径；“熟/干/制品”状态会直接影响数值，记录时注意别把熟重当生重。</div>`;
+  <div class="muted" style="padding:0 4px 10px">数据均为每 100g 可食部口径；“熟/干/制品”状态会直接影响数值，记录时注意别把熟重当生重。内置条目按匹配度优先，自建/扫码条目排在同等匹配之后。</div>`;
+}
+const CAT_EMOJI = { 主食: '🍚', 蔬菜: '🥦', 菌菇: '🍄', 水果: '🍎', 畜肉: '🥩', 禽肉: '🍗', 水产: '🐟', 蛋奶: '🥛', 豆制品: '🫘', 坚果: '🥜', 饮品: '🥤', 加工食品: '🍪', 调味: '🧂', 油脂: '🫒', 家常菜: '🍲', 自建: '📦', 我的扫码: '📦' };
+function foodIcon(f) {
+  const n = f.n || '', cat = f.cat || '';
+  let em = CAT_EMOJI[cat] || '🍽️', bg = 'var(--card2)';
+  if (cat === '畜肉') { em = '🥩'; bg = /猪/.test(n) ? '#ffe4e6' : /牛/.test(n) ? '#ffd9d9' : /羊/.test(n) ? '#f5e3cc' : '#ffe4e6'; }
+  else if (cat === '蛋奶') { if (/蛋/.test(n)) { em = '🥚'; bg = '#fff4d6'; } else { em = '🥛'; bg = '#e6f0ff'; } }
+  else if (cat === '水产') { em = /虾/.test(n) ? '🦐' : /蟹/.test(n) ? '🦀' : /贝|蛤|蛏|牡蛎|扇贝|鲍/.test(n) ? '🦪' : '🐟'; bg = '#e2f2ff'; }
+  else if (cat === '蔬菜') {
+    em = /菇|菌/.test(n) ? '🍄' : /瓜/.test(n) ? '🥒' : /豆/.test(n) ? '🫛' : /椒/.test(n) ? '🫑' : /萝卜|胡萝卜/.test(n) ? '🥕' : /番茄|西红柿/.test(n) ? '🍅' : /玉米/.test(n) ? '🌽' : '🥬';
+    bg = '#e6f6e9';
+  }
+  else if (cat === '菌菇') { em = '🍄'; bg = '#f1e8de'; }
+  else if (cat === '水果') {
+    em = /香蕉|芭蕉/.test(n) ? '🍌' : /苹果/.test(n) ? '🍎' : /梨/.test(n) ? '🍐' : /橙|橘|柑|柚/.test(n) ? '🍊' : /葡萄|提子/.test(n) ? '🍇' : /西瓜|瓜/.test(n) ? '🍉' : /桃/.test(n) ? '🍑' : /莓/.test(n) ? '🫐' : /菠萝|凤梨/.test(n) ? '🍍' : /芒果/.test(n) ? '🥭' : /柠檬/.test(n) ? '🍋' : '🍎';
+    bg = '#fff0e6';
+  }
+  else if (cat === '主食') { em = /面|粉|饼|馍|包|饺|条/.test(n) ? '🍜' : '🍚'; bg = '#fff3dd'; }
+  else if (cat === '禽肉') { em = '🍗'; bg = '#ffeede'; }
+  else if (cat === '家常菜') { em = '🍲'; bg = '#ffe9e0'; }
+  else if (cat === '坚果') { em = '🥜'; bg = '#f6ead9'; }
+  else if (cat === '饮品') { em = '🥤'; bg = '#e6f0ff'; }
+  else if (cat === '加工食品') { em = '🍪'; bg = '#f3ead9'; }
+  else if (cat === '调味') { em = '🧂'; bg = '#f0f0f0'; }
+  else if (cat === '油脂') { em = '🫒'; bg = '#fdf3d6'; }
+  else if (cat === '豆制品') { em = '🫘'; bg = '#f0ead8'; }
+  return `<span class="fico" style="background:${bg}">${em}</span>`;
 }
 function foodRow(f) {
   const p = round(f.pro);
   return `<div class="food-row" data-act="foodDetail" data-name="${esc(f.n)}">
+    ${f.img ? `<img class="thumb" data-img="${esc(f.img)}" alt="">` : foodIcon(f)}
     <div class="nm"><p>${esc(f.n)} ${srcTag(f)}</p>
       <div class="sub">${f.cat} · ${esc(f.st || '生')} · 蛋白 ${p}g</div></div>
     <div class="k"><b>${Math.round(f.kcal)}</b><span>kcal/100g</span></div>
@@ -880,6 +919,10 @@ function viewHistory() {
   return `<div class="top"><div><h1>📅 历史</h1><div class="date">按天回看 · 最近 7 天平均 ${Math.round(wIn / 7)} kcal</div></div>
     <div class="act"><button class="icon-btn" data-act="pickDate">📅</button></div></div>
   <div class="view">
+    <div class="card hero">
+      <div class="sum-head"><span class="kcal-big">${Math.round(wIn / 7)}</span><span class="kcal-of">kcal / 天（近 7 天）</span></div>
+      <div class="hero-sub">记录 ${week.filter(x => x.s.kcal > 0).length}/7 天 · 目标 ${t.kcal} kcal · 看周平均比看单天可靠</div>
+    </div>
     <div class="card">
       <div class="cal-h"><h3>${y} 年 ${m + 1} 月</h3>
         <div class="cal-nav"><button class="icon-btn" data-act="calPrev">‹</button><button class="icon-btn" data-act="calNext">›</button></div></div>
@@ -1143,7 +1186,7 @@ function viewEnergy() {
   const confMap = { high: ['高', 'var(--brand)'], mid: ['中', 'var(--warn)'], low: ['低', 'var(--danger)'] };
   const confTxt = cal.ok ? confMap[cal.conf] : null;
   return `<div class="top"><div><h1>🔥 我的消耗</h1><div class="date">${fmtDate(todayISO())} · 估算值，用体重趋势校准</div></div>
-    <div class="act"><button class="icon-btn" data-act="back">‹</button></div></div>
+    <div class="act">${S.screen === 'energy' ? '<button class="icon-btn" data-act="back">‹</button>' : '<button class="icon-btn" data-act="exercise" title="运动消耗计算器">＋</button>'}</div></div>
   <div class="view">
     <div class="card hero">
       <div class="row"><span class="muted">今日总消耗（TDEE）</span>
@@ -1306,8 +1349,12 @@ function viewMe() {
       <div class="quick-wrap" style="margin-top:10px">
         <button class="btn sm" data-act="exportCSV">导出 CSV</button>
         <button class="btn sm ghost" data-act="exportJSON">导出 JSON</button>
+        <button class="btn sm ghost" data-act="exportJSONImg">含图片备份</button>
         <button class="btn sm ghost" data-act="importJSON">导入还原</button>
       </div>
+      <div class="row" style="margin-top:12px"><h3 class="title-s">扫码包装图</h3><button class="link" data-act="imgStat">查看占用</button></div>
+      <div class="quick-wrap" style="margin-top:6px"><button class="btn sm ghost" data-act="imgClean">清理旧图片</button></div>
+      <div class="muted" style="margin-top:6px">图片存在 IndexedDB（不占 localStorage），单张压缩到 ≤100KB；默认备份不含图片，需要时点「含图片备份」。</div>
       <details style="margin-top:10px"><summary>危险操作</summary><div class="bd">
         <button class="btn sm danger" data-act="resetAll">清空全部数据</button></div></details>
     </div>
@@ -1401,10 +1448,12 @@ function citeLabel(ids) {
 }
 
 /* ================= 弹层 ================= */
-function openSheet(html, cls) {
+function openSheet(html, after) {
   $('#sheetBody').innerHTML = html;
   $('#overlay').classList.add('on');
   $('#sheet').classList.add('on');
+  if (typeof after === 'function') after();
+  hydrateImgs();
 }
 function closeSheet() {
   $('#overlay').classList.remove('on');
@@ -1444,13 +1493,18 @@ function foodDetailSheet(name) {
   const dishInfo = f.dish ? `<div class="banner warn">家常菜为<b>估算值</b>：${esc(f.dish.note)}。想更准就拆成食材（肉 + 菜 + 食用油）分别记录。</div>
     <div class="src-card"><div class="nm">配料（一份 ${f.pg} g）</div>
     ${f.dish.comp.map(([n2, g]) => `<div class="ln">${esc(n2)} ${g} g</div>`).join('')}</div>` : '';
+  const rw = f.raw || { kcal: f.kcal, pro: f.pro, fat: f.fat, carb: f.carb, na: f.na, sugar: null };
+  const scanInfo = f.bc ? `<div class="src-card"><div class="hd"><span class="nm">条码 ${esc(f.bc)}</span><span class="tag">原始每 100g</span></div>
+    <div class="ln">热量 ${rw.kcal} kcal · 蛋白 ${rw.pro} g · 脂肪 ${rw.fat} g · 碳水 ${rw.carb} g${rw.sugar != null ? ' · 糖 ' + rw.sugar + ' g' : ''} · 钠 ${Math.round(rw.na)} mg</div>
+    ${f.brand ? `<div class="ln">品牌：${esc(f.brand)}</div>` : ''}</div>` : '';
   const presets = portionPresets(f);
   openSheet(`
-    <div class="sheet-h"><div><h2>${esc(f.n)}</h2>
+    <div class="sheet-h"><div><h2 style="display:flex;align-items:center">${foodIcon(f)}${esc(f.n)}</h2>
       <div class="muted" style="margin-top:4px">${srcTag(f)} <span class="tag">${f.cat}</span> <span class="tag">${esc(f.st || '生')}</span></div></div>
       <button class="x" data-act="closeSheet">×</button></div>
+    ${f.img ? `<img class="bigimg" data-img="${esc(f.img)}" alt="包装图">` : ''}
     <div class="muted">每 100 g 可食部</div>
-    ${p}${dishInfo}
+    ${p}${dishInfo}${scanInfo}
     ${f.dish ? '' : `<div class="muted" style="margin-top:6px">钾 ${f.k ? Math.round(f.k) + ' mg' : '未收录'}（部分条目缺钾数据，累计时按 0 处理）</div>`}
     <div style="margin-top:12px">
       ${presets.length ? `<div class="quick-wrap">${presets.map(([l, g]) => `<button class="chip" data-preset="${g}">${l} · ${g}g</button>`).join('')}</div>` : ''}
@@ -1462,6 +1516,7 @@ function foodDetailSheet(name) {
       <div class="card tight" style="background:var(--card2);box-shadow:none" id="addPreview"></div>
       <button class="btn block" style="margin-top:10px" data-act="doAdd" data-name="${esc(f.n)}">加入记录</button>
       <div class="row" style="margin-top:10px"><span class="muted">数据来源</span><button class="link" data-act="toggleFav" data-name="${esc(f.n)}">${state.fav.includes(f.n) ? '★ 已收藏' : '☆ 收藏常吃'}</button></div>
+      ${f.custom ? `<div class="row" style="margin-top:8px"><button class="link" data-act="editCustom" data-name="${esc(f.n)}">✏️ 编辑这条</button><button class="link" style="color:var(--danger)" data-act="delCustom" data-name="${esc(f.n)}">删除</button></div>` : ''}
       ${sourceCard(f)}
     </div>`);
   bindAddPreview(f);
@@ -1483,6 +1538,7 @@ function addEntry(f, grams, meal, date) {
   if (!(grams > 0)) return toast('请输入大于 0 的克数');
   state.entries.push({
     id: uid(), d: date, m: meal, n: f.n, g: round(grams, 1), src: f.src, ts: Date.now(),
+    img: f.img || null, imgShot: f.imgShot || null, bc: f.bc || null,
     base: { kcal: f.kcal, pro: f.pro, fat: f.fat, carb: f.carb, fib: f.fib, na: f.na, k: f.k || 0 }
   });
   state.recents = [f.n].concat(state.recents.filter(x => x !== f.n)).slice(0, 10);
@@ -1493,6 +1549,8 @@ function editEntrySheet(id) {
   if (!e) return;
   const f = DB.find(x => x.n === e.n) || { n: e.n, src: e.src, cat: '', st: '' };
   openSheet(`<div class="sheet-h"><div><h2>修改记录</h2><div class="muted">${esc(e.n)} · ${fmtDate(e.d)}</div></div><button class="x" data-act="closeSheet">×</button></div>
+    ${e.img ? `<img class="bigimg" data-img="${esc(e.img)}" alt="">` : ''}
+    ${e.bc ? `<div class="muted" style="margin:4px 0">条码 ${esc(e.bc)}</div>` : ''}
     <div class="grid2"><div class="field"><label>克数 g</label><input id="eg" type="number" inputmode="decimal" value="${e.g}"></div>
       <div class="field"><label>餐次</label><select id="em">${MEALS.map(([m, n]) => `<option value="${m}" ${e.m === m ? 'selected' : ''}>${n}</option>`).join('')}</select></div></div>
     <div class="field"><label>日期</label><input id="ed" type="date" value="${e.d}"></div>
@@ -1501,28 +1559,39 @@ function editEntrySheet(id) {
     <button class="btn block danger" style="margin-top:8px" data-act="delEntry" data-id="${e.id}">删除这条</button>
     ${sourceCard(f)}`);
 }
-function customFoodSheet() {
-  openSheet(`<div class="sheet-h"><div><h2>自建食物</h2><div class="muted">照着包装营养成分表填，kJ 会自动换算</div></div><button class="x" data-act="closeSheet">×</button></div>
-    <div class="field"><label>名称 *</label><input id="cfName" placeholder="如：某品牌蛋白棒"></div>
+let customEditing = null;
+function customFoodSheet(prefill, mode) {
+  const p = prefill || {};
+  const src = mode === 'EDIT' ? (p.src || 'USR') : (mode === 'LABEL' ? 'LABEL' : 'USR');
+  customEditing = mode === 'EDIT' ? p.n : null;
+  const cats = ['主食', '畜肉', '禽肉', '水产', '蛋奶', '豆制品', '蔬菜', '水果', '坚果', '油脂', '调味', '加工食品', '饮品', '自建'];
+  if (p.cat && !cats.includes(p.cat)) cats.unshift(p.cat);
+  const title = mode === 'EDIT' ? '编辑自建食物' : (src === 'LABEL' ? '手动填包装营养' : '自建食物');
+  const note = src === 'LABEL' ? '<div class="banner info">来源标为「包装标签」，按包装营养成分表填写；保存后进食物库，可搜索、可导出。</div>'
+    : src === 'OFF' ? '<div class="banner info">这是你扫码入库的商品，可修正数值；来源仍为 Open Food Facts，按条码去重。</div>'
+      : '<div class="banner info">自建食物只存本机，标签为「自建 · 手动录入」。可用「导出 JSON」搬到新设备。</div>';
+  openSheet(`<div class="sheet-h"><div><h2>${title}</h2><div class="muted">照着包装营养成分表填，kJ 会自动换算</div></div><button class="x" data-act="closeSheet">×</button></div>
+    <input type="hidden" id="cfSrc" value="${src}"><input type="hidden" id="cfBc" value="${esc(p.bc || '')}">
+    <div class="field"><label>名称 *</label><input id="cfName" placeholder="如：某品牌蛋白棒" value="${esc(p.n || '')}"></div>
     <div class="grid2">
-      <div class="field"><label>类别</label><select id="cfCat">${['主食', '畜肉', '禽肉', '水产', '蛋奶', '豆制品', '蔬菜', '水果', '坚果', '油脂', '调味', '加工食品', '饮品', '自建'].map(c => `<option>${c}</option>`).join('')}</select></div>
-      <div class="field"><label>状态</label><select id="cfSt"><option>生</option><option>熟</option><option>干</option><option>制品</option></select></div>
+      <div class="field"><label>类别</label><select id="cfCat">${cats.map(c => `<option ${c === (p.cat || '加工食品') ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>状态</label><select id="cfSt">${['生', '熟', '干', '制品'].map(s => `<option ${s === (p.st || '制品') ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>能量 *</label>
-      <div class="grid2"><input id="cfEnergy" type="number" inputmode="decimal" placeholder="包装上的数值">
+      <div class="grid2"><input id="cfEnergy" type="number" inputmode="decimal" placeholder="包装上的数值" value="${p.kcal != null && p.kcal !== '' ? p.kcal : ''}">
       <select id="cfUnit"><option value="kcal">kcal / 100g</option><option value="kj">kJ / 100g</option></select></div>
       <div class="hint" id="cfConv">kJ → kcal：除以 4.184</div></div>
     <div class="grid2">
-      <div class="field"><label>蛋白质 g</label><input id="cfPro" type="number" inputmode="decimal" value="0"></div>
-      <div class="field"><label>脂肪 g</label><input id="cfFat" type="number" inputmode="decimal" value="0"></div>
-      <div class="field"><label>碳水 g</label><input id="cfCarb" type="number" inputmode="decimal" value="0"></div>
-      <div class="field"><label>膳食纤维 g</label><input id="cfFib" type="number" inputmode="decimal" value="0"></div>
-      <div class="field"><label>钠 mg</label><input id="cfNa" type="number" inputmode="decimal" value="0"></div>
-      <div class="field"><label>钾 mg（可选）</label><input id="cfK" type="number" inputmode="decimal" value="0"></div>
+      <div class="field"><label>蛋白质 g</label><input id="cfPro" type="number" inputmode="decimal" value="${p.pro != null ? p.pro : 0}"></div>
+      <div class="field"><label>脂肪 g</label><input id="cfFat" type="number" inputmode="decimal" value="${p.fat != null ? p.fat : 0}"></div>
+      <div class="field"><label>碳水 g</label><input id="cfCarb" type="number" inputmode="decimal" value="${p.carb != null ? p.carb : 0}"></div>
+      <div class="field"><label>膳食纤维 g</label><input id="cfFib" type="number" inputmode="decimal" value="${p.fib != null ? p.fib : 0}"></div>
+      <div class="field"><label>钠 mg</label><input id="cfNa" type="number" inputmode="decimal" value="${p.na != null ? p.na : 0}"></div>
+      <div class="field"><label>钾 mg（可选）</label><input id="cfK" type="number" inputmode="decimal" value="${p.k != null ? p.k : 0}"></div>
     </div>
-    <div class="field"><label>备注 / 品牌 / 条码（可选）</label><input id="cfBrand" placeholder="便于以后辨认"></div>
-    <div class="banner info">自建食物只存本机，标签为「自建 · 手动录入」，不会和成分表/开源库数据混在一起。</div>
-    <button class="btn block" data-act="saveCustom">保存并加入记录库</button>`);
+    <div class="field"><label>品牌 / 备注 / 条码（可选）</label><input id="cfBrand" placeholder="便于以后辨认" value="${esc(p.brand || p.bc || '')}"></div>
+    ${note}
+    <button class="btn block" data-act="saveCustom">${mode === 'EDIT' ? '保存修改' : '保存并加入食物库'}</button>`);
   const e = $('#cfEnergy'), u = $('#cfUnit'), hint = $('#cfConv');
   const upd = () => {
     const v = +e.value || 0;
@@ -1773,6 +1842,11 @@ function viewPlan() {
   return `<div class="top"><div><h1>🥗 今日餐单</h1><div class="date">按${p.mode === 'cut' ? '减脂' : p.mode === 'bulk' ? '增肌' : '维持'}目标 · 剩余 ${b.remK} kcal / 蛋白 ${b.remP} g</div></div>
     <div class="act"><button class="icon-btn" data-act="back">‹</button></div></div>
   <div class="view">
+    <div class="card hero">
+      <div class="row"><span class="muted">今天还能吃的额度</span><span class="tag">${p.mode === 'cut' ? '减脂' : p.mode === 'bulk' ? '增肌' : '维持'}</span></div>
+      <div class="sum-head"><span class="kcal-big">${b.remK}</span><span class="kcal-of">kcal · 蛋白还差 ${b.remP} g</span></div>
+      <div class="hero-sub">餐单按剩余额度配 · 吃完一键加入当天记录</div>
+    </div>
     <div class="card">
       <div class="row"><h3 class="title-s">目标模式</h3><span class="muted">改模式会重算额度</span></div>
       <div class="seg" style="margin-top:8px">${['cut', 'keep', 'bulk'].map(m => `<button class="${p.mode === m ? 'on' : ''}" data-act="setMode" data-v="${m}">${m === 'cut' ? '减脂' : m === 'bulk' ? '增肌' : '维持'}</button>`).join('')}</div>
@@ -1826,6 +1900,8 @@ function planConfirmSheet(meal, id) {
 const EXLIB = [
   { id: 'strength', n: '力量训练', strength: true, cite: 'ainsworth', note: '汇编中抗阻训练条目本身已包含组间休息；不同动作、负荷与节奏差异很大，所以让你填组数与休息。',
     tiers: [{ n: '轻（器械/单组/休息长', met: 3.5, lo: 3.0, hi: 4.5 }, { n: '中（多组复合动作）', met: 5.0, lo: 4.0, hi: 6.0 }, { n: '高（大重量/循环少休息）', met: 6.0, lo: 5.5, hi: 8.0 }] },
+  { id: 'pullup', n: '负重引体向上', strength: true, pullup: true, cite: 'ainsworth', note: '按机械功估算：总负荷 × 9.81 × 垂直位移 × 总次数 ÷ 做功效率（毛效率约 20–25%）。正手与反手机械功接近，能量差异不显著，这里不做虚构的百分比差异。',
+    tiers: [{ n: '正手（overhand / pronated）', met: 8.0, lo: 7.0, hi: 9.0 }, { n: '反手（chin-up / supinated）', met: 8.0, lo: 7.0, hi: 9.0 }] },
   { id: 'run', n: '跑步', cite: 'ainsworth', note: '配速越快 MET 越高；跑步机与户外、坡度都会改变实际消耗。',
     tiers: [{ n: '6.4 km/h（慢跑）', met: 6.0, lo: 5.5, hi: 6.5 }, { n: '8 km/h', met: 8.3, lo: 8.0, hi: 8.6 }, { n: '9.6 km/h', met: 9.8, lo: 9.5, hi: 10.2 }, { n: '10 km/h（插值）', met: 10.0, lo: 9.8, hi: 11.0 }, { n: '11.2 km/h', met: 11.0, lo: 10.5, hi: 11.5 }, { n: '12.9 km/h', met: 11.8, lo: 11.5, hi: 12.3 }] },
   { id: 'walk', n: '快走', cite: 'ainsworth', note: '走路的速度与地形影响很大；上坡按坡度另加。',
@@ -1869,6 +1945,27 @@ function exCompute(v) {
     restMin = +v.sets * (+v.rest || 1.5);
     totalMin = workMin + restMin;
   }
+  if (lib.pullup) {
+    const sets = Math.max(1, +v.sets || 3), reps = Math.max(1, +v.reps || 8);
+    const totalReps = sets * reps;
+    const load = Math.max(1, kg + (+v.added || 0));
+    const disp = clamp(+v.disp || 0.55, 0.3, 0.9);
+    const workKcal = load * 9.81 * disp * totalReps / 4184;
+    const net = workKcal / 0.225;
+    const restMin = (sets - 1) * (+v.rest || 1.5);
+    const workMin2 = totalReps * 2.5 / 60;
+    totalMin = workMin2 + restMin;
+    const bb = bmrCalc(state.profile);
+    const restingKcal = (bb[bb.rec] || bb.mif) / 1440 * totalMin;
+    const gross = net + restingKcal;
+    return {
+      lib, tier, met: 8.0, metNote: '', pullup: true, totalReps, load, disp,
+      workKcal, totalMin, workMin: workMin2, restMin, h: totalMin / 60, kg,
+      gross, net, lo: gross * 0.9, hi: gross * 1.1,
+      netLo: workKcal / 0.25, netHi: workKcal / 0.20, restingKcal,
+      hr: 0, hrGross: 0, hrNet: 0, epocLo: net * 0.06, epocHi: net * 0.15, lvlTxt: '', sets, reps, added: +v.added || 0
+    };
+  }
   let met = tier.met, metNote = '';
   if (lib.strength && workMin > 0 && totalMin > 0) {
     const ws = Math.max(0.15, Math.min(0.9, workMin / totalMin));
@@ -1894,6 +1991,23 @@ function exCompute(v) {
   return { lib, tier, met, metNote, totalMin, workMin, restMin, h, kg, gross, net, lo: gross * 0.88, hi: gross * (1 + up), netLo: net * 0.88, netHi: net * (1 + up), hr, hrGross, hrNet, lvlTxt, epocLo: net * 0.06, epocHi: net * 0.15 };
 }
 function exResultHtml(r, v) {
+  if (r.pullup) {
+    const grip = r.tier.n;
+    return `<div class="calc">
+    <div class="calc-row"><span>握法</span><b>${esc(grip)}</b></div>
+    <div class="calc-row"><span>总负荷</span><b>${round(r.load, 1)} kg（体重 ${round(r.kg, 1)} ${r.added >= 0 ? '+' : '−'} ${Math.abs(round(r.added, 1))}）</b></div>
+    <div class="calc-row"><span>总次数</span><b>${r.sets} 组 × ${r.reps} 次 = ${r.totalReps} 次</b></div>
+    <div class="calc-row"><span>机械功（${r.disp} m/次）</span><b>${round(r.workKcal, 1)} kcal</b></div>
+    <div class="calc-row big"><span>净额外消耗（效率 22.5%）</span><b>${Math.round(r.net)} kcal</b></div>
+    <div class="calc-row"><span>其中静息代谢</span><b>${Math.round(r.restingKcal)} kcal（${Math.round(r.totalMin)} 分钟）</b></div>
+    <div class="calc-row big"><span>本次总消耗</span><b>${Math.round(r.gross)} kcal</b></div>
+    <div class="calc-row"><span>大约抵消</span><b>${Math.round(r.net)} kcal</b></div>
+    <div class="muted">算法：总负荷 × 9.81 × 垂直位移 × 总次数 = 机械功（J），再除以人体做功毛效率 22.5%（文献常见 20–25%）。净额外 ${Math.round(r.netLo)}–${Math.round(r.netHi)} kcal；总消耗再加这段时间的静息代谢（按你的 BMR 计）。</div>
+    <div class="muted" style="margin-top:4px">这是<b>基于机械功的估算</b>，不是实测；垂直位移按每次 ${r.disp} m（可调 0.3–0.9），起止姿势、摆动借力都会改变结果。正手与反手机械功接近，能量差异不显著，差别主要来自负重、次数和动作效率，这里不编造百分比差异。</div>
+    <div class="row" style="margin-top:10px"><button class="btn" data-act="saveEx">加入今天的运动记录</button>
+      <button class="link" data-act="cite" data-ids="ainsworth">依据：MET 汇编 ›</button></div>
+  </div>`;
+  }
   return `<div class="calc">
     <div class="calc-row"><span>运动时长</span><b>${Math.round(r.totalMin)} 分钟</b></div>
     ${v.type === 'strength' && +v.sets > 0 ? `<div class="calc-row"><span>运动 / 休息</span><b>${Math.round(r.workMin)} / ${Math.round(r.restMin)} 分钟</b></div>` : ''}
@@ -1918,15 +2032,21 @@ function exerciseSheet() {
     <div class="muted">先选运动与强度档，再填时长/体重。结果同时给总消耗与净额外消耗。</div>
     <div class="field" style="margin-top:10px"><label>运动类型</label>
       <select id="exType">${EXLIB.map((x, i) => `<option value="${x.id}" ${i === 0 ? 'selected' : ''}>${x.n}</option>`).join('')}</select></div>
-    <div class="field"><label>强度档位</label><select id="exTier">${t0.tiers.map((t, i) => `<option value="${i}">${t.n}（MET ${t.met}）</option>`).join('')}</select></div>
+    <div class="field"><label id="exTierLabel">强度档位</label><select id="exTier">${t0.tiers.map((t, i) => `<option value="${i}">${t.n}（MET ${t.met}）</option>`).join('')}</select></div>
     <div class="two">
-      <div class="field"><label>时长（分钟）</label><input class="num" id="exMin" type="number" min="1" step="5" value="30"></div>
+      <div class="field" id="exMinWrap"><label>时长（分钟）</label><input class="num" id="exMin" type="number" min="1" step="5" value="30"></div>
       <div class="field"><label>体重（kg）</label><input class="num" id="exKg" type="number" min="30" step="0.1" value="${latestWeight()}"></div>
     </div>
     <div class="two" id="strengthBox" style="display:none">
       <div class="field"><label>组数</label><input class="num" id="exSets" type="number" min="0" step="1" value="4"></div>
       <div class="field"><label>组间休息（分钟）</label><input class="num" id="exRest" type="number" min="0" step="0.5" value="1.5"></div>
     </div>
+    <div class="two" id="pullupBox" style="display:none">
+      <div class="field"><label>每组次数</label><input class="num" id="exReps" type="number" min="1" step="1" value="8"></div>
+      <div class="field"><label>外加负重 kg（负值=助力）</label><input class="num" id="exAdded" type="number" step="0.5" value="0"></div>
+    </div>
+    <div class="field" id="pullupDispWrap" style="display:none"><label>垂直位移（米/次）</label><input class="num" id="exDisp" type="number" min="0.3" max="0.9" step="0.05" value="0.55">
+      <div class="hint">引体向上每次上升约 0.5–0.6 m，默认 0.55 m；不确定就保持默认。</div></div>
     <div class="two">
       <div class="field"><label>训练水平</label><select id="exLevel"><option value="novice">新手</option><option value="mid" selected>中级</option><option value="adv">高级</option></select></div>
       <div class="field"><label>运动心率（可选，次/分）</label><input class="num" id="exHr" type="number" min="0" max="220" step="1" placeholder="如 140"></div>
@@ -1936,16 +2056,22 @@ function exerciseSheet() {
     const read = () => ({
       type: $('#exType').value, tier: +$('#exTier').value, min: +$('#exMin').value,
       kg: +$('#exKg').value, sets: +$('#exSets').value, rest: +$('#exRest').value,
+      reps: +($('#exReps') ? $('#exReps').value : 0), added: +($('#exAdded') ? $('#exAdded').value : 0),
+      disp: +($('#exDisp') ? $('#exDisp').value : 0.55),
       level: $('#exLevel').value, hr: +$('#exHr').value
     });
     const fillTiers = () => {
       const lib = EXLIB.find(x => x.id === $('#exType').value) || EXLIB[0];
-      $('#exTier').innerHTML = lib.tiers.map((t, i) => `<option value="${i}">${t.n}（MET ${t.met}）</option>`).join('');
+      $('#exTier').innerHTML = lib.tiers.map((t, i) => `<option value="${i}">${t.n}${lib.pullup ? '' : '（MET ' + t.met + '）'}</option>`).join('');
+      $('#exTierLabel').textContent = lib.pullup ? '握法' : '强度档位';
       $('#strengthBox').style.display = lib.strength ? '' : 'none';
+      $('#pullupBox').style.display = lib.pullup ? '' : 'none';
+      $('#pullupDispWrap').style.display = lib.pullup ? '' : 'none';
+      $('#exMinWrap').style.display = lib.pullup ? 'none' : '';
     };
     const upd = () => { const v = read(); lastEx = { v, r: exCompute(v) }; $('#exOut').innerHTML = exResultHtml(lastEx.r, v); };
     $('#exType').addEventListener('change', () => { fillTiers(); upd(); });
-    ['exTier', 'exMin', 'exKg', 'exSets', 'exRest', 'exLevel', 'exHr'].forEach(id => $('#' + id).addEventListener('input', upd));
+    ['exTier', 'exMin', 'exKg', 'exSets', 'exRest', 'exReps', 'exAdded', 'exDisp', 'exLevel', 'exHr'].forEach(id => { const el = $('#' + id); if (el) el.addEventListener('input', upd); });
     upd();
   });
 }
@@ -1990,6 +2116,15 @@ function exportJSON() {
   download('饮食备份-' + todayISO() + '.json', JSON.stringify(state, null, 1), 'application/json');
   toast('已导出 JSON 备份');
 }
+async function exportJSONImages() {
+  const rows = await imgAll();
+  if (!rows.length) return toast('没有扫码图片，先按要求导出普通 JSON 即可');
+  const read = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
+  const imgs = {};
+  for (const r of rows) imgs[r.id] = await read(r.blob);
+  download('饮食备份-含图-' + todayISO() + '.json', JSON.stringify(Object.assign({}, state, { imgs }), null, 1), 'application/json');
+  toast('已导出含图片备份（' + rows.length + ' 张，文件较大）');
+}
 function importJSON() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.json,application/json';
@@ -2000,12 +2135,28 @@ function importJSON() {
       try {
         const d = JSON.parse(fr.result);
         if (!d || !Array.isArray(d.entries)) throw new Error('格式不对');
+        const prevCustom = state.custom ? state.custom.slice() : [];
+        const imgsIn = d.imgs || null;
         state = Object.assign(defaultState(), d);
+        delete state.imgs;
         state.profile = Object.assign(defaultState().profile, d.profile || {});
         state.settings = Object.assign(defaultState().settings, d.settings || {});
         state.weights = (state.weights || []).map(w => w.t ? w : { id: w.id || uid(), d: w.d, t: 'am', kg: w.kg, ts: w.ts || Date.parse(w.d) || Date.now() });
-        dayCache.clear(); rebuildDB(); save(); closeSheet(); S.screen = ''; S.tab = 'today'; render();
-        toast('已导入 ' + state.entries.length + ' 条记录');
+        // 自建/扫码条目按条码或名称合并，避免换设备后重复
+        const imported = Array.isArray(state.custom) ? state.custom.slice() : [];
+        prevCustom.forEach(old => {
+          const dup = imported.some(c => (old.bc && c.bc && String(old.bc) === String(c.bc)) || c.n === old.n);
+          if (!dup) imported.push(old);
+        });
+        state.custom = imported;
+        dayCache.clear(); rebuildDB(); save();
+        if (imgsIn && typeof imgsIn === 'object') {
+          Promise.all(Object.entries(imgsIn).map(async ([id, data]) => {
+            try { const b = await (await fetch(data)).blob(); await imgPutWithId(id, b, {}); } catch (e) { }
+          })).then(() => toast('图片已恢复 ' + Object.keys(imgsIn).length + ' 张')).catch(() => { });
+        }
+        closeSheet(); S.screen = ''; S.tab = 'today'; render();
+        toast('已导入 ' + state.entries.length + ' 条记录 · 自建食物 ' + state.custom.length + ' 条');
       } catch (err) { toast('导入失败：' + err.message); }
     };
     fr.readAsText(file);
@@ -2013,45 +2164,187 @@ function importJSON() {
   inp.click();
 }
 
-/* ---- 扫码 ---- */
-let scanStream = null, scanRAF = null;
+/* ---- 扫码包装图（IndexedDB，localStorage 只存 key） ---- */
+const IMG_DB = 'dietimg';
+let imgDBp = null;
+const imgCache = new Map();
+function imgDB() {
+  if (!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB 不可用'));
+  if (imgDBp) return imgDBp;
+  imgDBp = new Promise((res, rej) => {
+    const r = indexedDB.open(IMG_DB, 1);
+    r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => { imgDBp = null; rej(r.error || new Error('打开图片库失败')); };
+  });
+  return imgDBp;
+}
+async function imgPut(blob, meta) {
+  if (!blob || blob.size > 400 * 1024) return null;
+  const db = await imgDB();
+  const id = 'p_' + uid();
+  await new Promise((res, rej) => {
+    const tx = db.transaction('photos', 'readwrite');
+    tx.objectStore('photos').put(Object.assign({ id, blob, ts: Date.now(), size: blob.size }, meta || {}));
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  return id;
+}
+async function imgGet(id) {
+  if (!id) return '';
+  if (imgCache.has(id)) return imgCache.get(id);
+  try {
+    const db = await imgDB();
+    const blob = await new Promise((res, rej) => {
+      const rq = db.transaction('photos', 'readonly').objectStore('photos').get(id);
+      rq.onsuccess = () => res(rq.result && rq.result.blob); rq.onerror = () => rej(rq.error);
+    });
+    if (!blob) return '';
+    const url = URL.createObjectURL(blob);
+    imgCache.set(id, url);
+    return url;
+  } catch (e) { return ''; }
+}
+async function imgDel(id) {
+  if (!id) return;
+  if (imgCache.has(id)) { try { URL.revokeObjectURL(imgCache.get(id)); } catch (e) { } imgCache.delete(id); }
+  try {
+    const db = await imgDB();
+    await new Promise((res, rej) => { const tx = db.transaction('photos', 'readwrite'); tx.objectStore('photos').delete(id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  } catch (e) { }
+}
+async function imgAll() {
+  try {
+    const db = await imgDB();
+    return await new Promise((res, rej) => {
+      const rq = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+      rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error);
+    });
+  } catch (e) { return []; }
+}
+async function imgPutWithId(id, blob, meta) {
+  const db = await imgDB();
+  await new Promise((res, rej) => {
+    const tx = db.transaction('photos', 'readwrite');
+    tx.objectStore('photos').put(Object.assign({ id, blob, ts: Date.now(), size: blob.size }, meta || {}));
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  return id;
+}
+async function imgStats() {
+  try {
+    const db = await imgDB();
+    const rows = await new Promise((res, rej) => {
+      const rq = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+      rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error);
+    });
+    return { n: rows.length, bytes: rows.reduce((a, x) => a + (x.size || 0), 0) };
+  } catch (e) { return { n: 0, bytes: 0, off: true }; }
+}
+async function imgClearOld(keep) {
+  const db = await imgDB();
+  const rows = await new Promise((res, rej) => {
+    const rq = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+    rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error);
+  });
+  rows.sort((a, b) => b.ts - a.ts);
+  const used = new Set();
+  state.entries.concat(state.custom || []).forEach(x => { if (x.img) used.add(x.img); if (x.imgShot) used.add(x.imgShot); });
+  const drop = rows.filter((r, i) => i >= (keep || 30) && !used.has(r.id));
+  for (const r of drop) await imgDel(r.id);
+  return drop.length;
+}
+async function hydrateImgs() {
+  const els = $$('[data-img]');
+  for (const el of els) {
+    if (el.dataset.loaded) continue;
+    if (!el.dataset.img) continue;
+    const url = await imgGet(el.dataset.img);
+    if (url) { el.src = url; el.dataset.loaded = '1'; el.style.visibility = 'visible'; }
+  }
+}
+
+
+let scanStream = null, scanRAF = null, scanReader = null, zxLoading = null, scanPending = null;
+function pyOf(s) {
+  if (typeof PY_INIT === 'undefined') return '';
+  return Array.from(String(s || '')).map(ch => {
+    if (/[a-z0-9]/i.test(ch)) return ch.toLowerCase();
+    if (/[\u4e00-\u9fa5]/.test(ch)) { for (const k in PY_INIT) if (PY_INIT[k].includes(ch)) return k; }
+    return '';
+  }).join('');
+}
 function stopScan() {
   if (scanRAF) cancelAnimationFrame(scanRAF); scanRAF = null;
+  if (scanReader) { try { scanReader.reset(); } catch (e) { } scanReader = null; }
   if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
 }
+function loadZXing() {
+  if (window.ZXing) return Promise.resolve();
+  if (zxLoading) return zxLoading;
+  zxLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = './zxing.min.js';
+    s.onload = () => window.ZXing ? res() : rej(new Error('解码库未初始化'));
+    s.onerror = () => { zxLoading = null; rej(new Error('本地解码库加载失败')); };
+    document.head.appendChild(s);
+  });
+  return zxLoading;
+}
 function scanSheet(extra) {
-  openSheet(`<div class="sheet-h"><div><h2>扫条码</h2><div class="muted">查 Open Food Facts，查不到可手动输入</div></div><button class="x" data-act="closeSheet">×</button></div>
+  openSheet(`<div class="sheet-h"><div><h2>扫条码</h2><div class="muted">Open Food Facts · 断网可手动录入</div></div><button class="x" data-act="closeSheet">×</button></div>
     ${extra || ''}
-    <div class="field"><label>条码（也可手动输入）</label><div class="grid2">
+    <div class="field"><label>条码（扫不到就手动输入）</label><div class="grid2">
       <input id="bc" type="tel" inputmode="numeric" placeholder="如 6901234567890">
       <button class="btn sm" data-act="offLookup">查询</button></div></div>
-    <div class="muted">Open Food Facts 数据由志愿者上传，包装食品的数值可能有误；以包装上的营养成分表为准。</div>`);
+    <button class="btn sm ghost block" style="margin-top:4px" data-act="customScan">✏️ 手动填包装营养表</button>
+    <div class="muted" style="margin-top:8px">Open Food Facts 由志愿者上传，数值可能有误，以包装营养成分表为准。扫码确认后会存进食物库，同一条码再次扫描只更新、不新增。</div>`);
+}
+function snapFrame() {
+  const v = $('#scanVideo');
+  if (!v || !v.videoWidth) return Promise.resolve(null);
+  const w = v.videoWidth, h = v.videoHeight, sc = Math.min(1, 400 / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+  try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); } catch (e) { return Promise.resolve(null); }
+  return new Promise(res => c.toBlob(b => res(b && b.size <= 400 * 1024 ? b : null), 'image/jpeg', 0.72));
 }
 async function openScan() {
-  if (!('BarcodeDetector' in window)) {
-    scanSheet('<div class="guard">这个浏览器不支持条码识别（安卓 Chrome 支持）。可以直接输入条码查询，或手动填营养表。</div>');
-    return;
-  }
-  scanSheet('<div class="scan-box" id="scanBox"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div><div class="scan-tip">对准包装上的条码，2 秒内自动识别</div></div>');
+  const native = 'BarcodeDetector' in window;
+  scanSheet(`<div class="scan-box" id="scanBox"><video id="scanVideo" playsinline muted></video><div class="scan-frame"></div><div class="scan-tip">对准包装条码，识别后自动查询</div></div>
+    ${native ? '' : '<div class="muted" style="margin-top:4px">本机没有原生条码识别，已启用内置 ZXing 解码（离线可用，首次稍慢）。</div>'}`);
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const v = $('#scanVideo'); v.srcObject = scanStream; await v.play();
-    const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
-    const loop = async () => {
-      if (!scanStream) return;
-      try {
-        const codes = await det.detect(v);
-        if (codes && codes.length) { const code = codes[0].rawValue; stopScan(); await lookupOFF(code); return; }
-      } catch (e) { }
-      scanRAF = requestAnimationFrame(loop);
-    };
-    loop();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('当前环境不支持摄像头'), { name: 'NotSupportedError' });
+    if (native) {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const v = $('#scanVideo'); v.srcObject = scanStream; await v.play();
+      const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] });
+      const loop = async () => {
+        if (!scanStream) return;
+        try {
+          const codes = await det.detect(v);
+          if (codes && codes.length) { const code = codes[0].rawValue; const shot = await snapFrame(); stopScan(); await lookupOFF(code, shot); return; }
+        } catch (e) { }
+        scanRAF = requestAnimationFrame(loop);
+      };
+      loop();
+    } else {
+      await loadZXing();
+      const reader = new ZXing.BrowserMultiFormatReader();
+      scanReader = reader;
+      await reader.decodeFromConstraints({ video: { facingMode: 'environment' } }, $('#scanVideo'), async (result) => {
+        if (result) { const txt = result.getText(); const shot = await snapFrame(); stopScan(); lookupOFF(txt, shot); }
+      });
+    }
   } catch (e) {
     stopScan();
-    scanSheet('<div class="guard">打不开摄像头：' + esc(e.message || '权限被拒绝') + '。可以直接输入条码或手动填营养。</div>');
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError' || e.name === 'NotFoundError');
+    scanSheet(`<div class="guard">${denied
+      ? '没拿到摄像头权限。请在浏览器或系统设置里允许本站使用摄像头，或直接用下方「手动输入条码 / 手动填营养表」。'
+      : '打不开摄像头：' + esc((e && e.message) || e) + '。可直接用下方手动输入条码或手动填营养表。'}</div>`);
   }
 }
-async function lookupOFF(code) {
+async function lookupOFF(code, shot) {
   code = String(code || '').replace(/\D/g, '');
   if (!code) return toast('请输入条码');
   toast('查询中…');
@@ -2061,28 +2354,79 @@ async function lookupOFF(code) {
     clearTimeout(tm);
     const j = await res.json();
     if (j.status !== 1 || !j.product) {
-      scanSheet(`<div class="banner warn">没查到条码 ${esc(code)}。可以手动填营养成分表，保存后复用。</div>
-        <div class="quick-wrap"><button class="btn sm" data-act="customFood">手动填营养表</button><button class="btn sm ghost" data-act="scan">再扫一次</button></div>`);
+      scanSheet(`<div class="banner warn">没查到条码 ${esc(code)}（可能未收录）。可手动填包装营养表，保存后会进食物库。</div>
+        <div class="quick-wrap" style="margin-top:8px"><button class="btn sm" data-act="customScan" data-bc="${esc(code)}">手动填营养表</button><button class="btn sm ghost" data-act="scan">再扫一次</button></div>`);
       return;
     }
     const pr = j.product, nu = pr.nutriments || {};
     const kcal = nu['energy-kcal_100g'] != null ? +nu['energy-kcal_100g'] : (nu['energy_100g'] != null ? +nu['energy_100g'] / 4.184 : 0);
+    const name = pr.product_name_zh || pr.product_name || ('条码 ' + code);
+    const brand = pr.brands || '';
+    const na = nu.sodium_100g != null ? Math.round(+nu.sodium_100g * 1000) : Math.round((+nu.salt_100g || 0) * 400);
     const f = {
-      n: (pr.product_name_zh || pr.product_name || ('条码 ' + code)) + (pr.brands ? '（' + pr.brands + '）' : ''),
-      a: pr.generic_name || '', cat: '加工食品', ed: 100, st: '制品', src: 'OFF',
-      kcal: Math.round(kcal), pro: +(nu.proteins_100g || 0), fat: +(nu.fat_100g || 0), carb: +(nu.carbohydrates_100g || 0),
-      fib: +(nu.fiber_100g || 0), na: nu.sodium_100g != null ? Math.round(+nu.sodium_100g * 1000) : Math.round((+nu.salt_100g || 0) * 400), k: +(nu.potassium_100g || 0) * 1000,
+      n: brand ? name + '（' + brand + '）' : name,
+      brand, bc: code, a: [pr.generic_name, brand, code].filter(Boolean).join(' '),
+      cat: '加工食品', ed: 100, st: '制品', src: 'OFF', custom: true,
+      kcal: Math.round(kcal), pro: round(+(nu.proteins_100g || 0), 1), fat: round(+(nu.fat_100g || 0), 1),
+      carb: round(+(nu.carbohydrates_100g || 0), 1), fib: round(+(nu.fiber_100g || 0), 1), na,
+      k: nu.potassium_100g != null ? Math.round(+nu.potassium_100g * 1000) : 0,
+      raw: {
+        kcal: Math.round(kcal), pro: round(+(nu.proteins_100g || 0), 1), fat: round(+(nu.fat_100g || 0), 1),
+        carb: round(+(nu.carbohydrates_100g || 0), 1), sugar: nu.sugars_100g != null ? +nu.sugars_100g : null, na
+      },
       py: '', pf: ''
     };
-    state.custom = state.custom.filter(x => x.n !== f.n).concat(f);
-    rebuildDB(); save();
-    const fi = foodByName(f.n);
-    foodDetailSheet(f.n);
-    toast('已从 Open Food Facts 取到数据，确认克数后加入');
+    f.py = [pyOf(name), pyOf(brand), pyOf(f.n)].filter(Boolean).join('|');
+    // 包装图：先存摄像头静帧，再尝试下载 OFF 商品封面（失败不报错）
+    let shotKey = null, frontKey = null;
+    if (shot) { try { shotKey = await imgPut(shot, { bc: code, kind: 'shot' }); } catch (e) { } }
+    if (pr.image_front_url) {
+      try {
+        const r2 = await fetch(pr.image_front_url, { mode: 'cors' });
+        if (r2.ok) {
+          const b = await r2.blob();
+          if (b && b.size > 0 && b.size <= 400 * 1024) frontKey = await imgPut(b, { bc: code, kind: 'front' });
+        }
+      } catch (e) { }
+    }
+    f.img = frontKey || shotKey || null;
+    f.imgShot = shotKey;
+    scanPending = f;
+    scanResultSheet(f);
   } catch (e) {
-    scanSheet(`<div class="banner warn">查询失败（${esc(e.name === 'AbortError' ? '超时' : e.message)}）。没网也能继续：手动填营养表。</div>
-      <div class="quick-wrap"><button class="btn sm" data-act="customFood">手动填营养表</button></div>`);
+    scanSheet(`<div class="banner warn">查询失败（${e && e.name === 'AbortError' ? '超时' : esc((e && e.message) || '网络错误')}）。没网也能继续：手动填营养表。</div>
+      <div class="quick-wrap" style="margin-top:8px"><button class="btn sm" data-act="customScan">手动填营养表</button><button class="btn sm ghost" data-act="offLookup">重试</button></div>`);
   }
+}
+function scanResultSheet(f) {
+  const r = f.raw || f;
+  openSheet(`<div class="sheet-h"><div><h2>扫到的食物</h2><div class="muted">${esc(f.brand || 'Open Food Facts')} · 条码 ${esc(f.bc)}</div></div><button class="x" data-act="closeSheet">×</button></div>
+    <div class="card tight" style="background:var(--card2);box-shadow:none">
+      ${f.img ? `<img class="bigimg" data-img="${esc(f.img)}" alt="包装图">` : ''}
+      <div class="row"><h3 class="title-s" style="flex:1;min-width:0">${esc(f.n)}</h3><span class="tag src-OFF">Open Food Facts</span></div>
+      <div class="muted" style="margin-top:5px">每 100g：热量 ${r.kcal} kcal · 蛋白 ${r.pro} g · 脂肪 ${r.fat} g · 碳水 ${r.carb} g${r.sugar != null ? ' · 糖 ' + r.sugar + ' g' : ''} · 钠 ${r.na} mg</div>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="field"><label>克数 g</label><input id="addG" type="number" inputmode="decimal" value="100"></div>
+      <div class="field"><label>餐次</label><select id="addMeal">${MEALS.map(([m, n]) => `<option value="${m}" ${m === S.meal ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>日期</label><input id="addDate" type="date" value="${S.date}"></div>
+    <div class="card tight" style="background:var(--card2);box-shadow:none" id="addPreview"></div>
+    <button class="btn block" style="margin-top:10px" data-act="addScan">确认加入 · 存入食物库</button>
+    <div class="quick-wrap" style="margin-top:8px">
+      <button class="btn tiny" data-act="customScan" data-bc="${esc(f.bc)}">数值不对，手动改</button>
+      <button class="btn tiny" data-act="scan">再扫一个</button>
+    </div>
+    <div class="muted" style="margin-top:8px">来源 Open Food Facts（志愿者众包），以包装标签为准。确认后同一条码再次扫描只更新，不重复。</div>`);
+  bindAddPreview(f);
+}
+function upsertCustom(f) {
+  const bc = String(f.bc || '');
+  let idx = bc ? state.custom.findIndex(x => String(x.bc || '') === bc) : -1;
+  if (idx < 0) idx = state.custom.findIndex(x => x.n === f.n);
+  if (idx >= 0) state.custom[idx] = Object.assign({}, state.custom[idx], f);
+  else state.custom.push(f);
+  rebuildDB(); save();
 }
 
 /* ---- 体重 / 腰围 / 训练 ---- */
@@ -2175,10 +2519,11 @@ const ACTIONS = {
     clearDay(e.d); e.g = round(g, 1); e.m = m; e.d = d; e.edited = true; clearDay(d);
     save(); closeSheet(); render(); toast('已保存并重算');
   },
-  delEntry: el => {
+  delEntry: async el => {
     const e = state.entries.find(x => x.id === el.dataset.id); if (!e) return;
     if (!confirm('删除「' + e.n + ' ' + e.g + 'g」？')) return;
     state.entries = state.entries.filter(x => x.id !== e.id);
+    if (e.img && confirm('这条带包装图，是否一起删掉图片？（取消=保留图片，供食物库使用）')) { await imgDel(e.img); if (e.imgShot) await imgDel(e.imgShot); }
     clearDay(e.d); save(); closeSheet(); render(); toast('已删除，汇总已重算');
   },
   toggleFav: el => {
@@ -2193,17 +2538,47 @@ const ACTIONS = {
     const raw = +$('#cfEnergy').value, unit = $('#cfUnit').value;
     const kcal = unit === 'kj' ? raw / 4.184 : raw;
     if (!(kcal > 0)) return toast('请填能量');
+    const src = ($('#cfSrc') ? $('#cfSrc').value : 'USR') || 'USR';
+    const bc = ($('#cfBc') ? $('#cfBc').value.trim() : '');
+    const brand = ($('#cfBrand').value || '').trim();
     const f = {
-      n, a: '', cat: $('#cfCat').value, ed: 100, st: $('#cfSt').value, src: 'USR',
+      n, brand, bc, custom: true, a: [brand, bc].filter(Boolean).join(' '),
+      cat: $('#cfCat').value, ed: 100, st: $('#cfSt').value, src,
       kcal: Math.round(kcal), pro: +$('#cfPro').value || 0, fat: +$('#cfFat').value || 0,
       carb: +$('#cfCarb').value || 0, fib: +($('#cfFib') ? $('#cfFib').value : 0) || 0,
-      na: +($('#cfNa') ? $('#cfNa').value : 0) || 0, k: +($('#cfK') ? $('#cfK').value : 0) || 0, py: '', pf: ''
+      na: +($('#cfNa') ? $('#cfNa').value : 0) || 0, k: +($('#cfK') ? $('#cfK').value : 0) || 0,
+      py: [pyOf(n), pyOf(brand)].filter(Boolean).join('|'), pf: ''
     };
-    state.custom = state.custom.filter(x => x.n !== n).concat(f);
-    rebuildDB(); save(); closeSheet(); render(); toast('已保存自建食物：' + n);
+    const old = customEditing ? state.custom.find(x => x.n === customEditing) : null;
+    if (old && !f.img) { f.img = old.img || null; f.imgShot = old.imgShot || null; }
+    if (customEditing && customEditing !== n) state.custom = state.custom.filter(x => x.n !== customEditing);
+    upsertCustom(f);
+    customEditing = null; closeSheet(); render();
+    toast(src === 'OFF' ? '已更新扫码食物：' + n : src === 'LABEL' ? '已存入食物库（包装标签）：' + n : '已保存自建食物：' + n);
   },
   scan: () => openScan(),
-  offLookup: () => lookupOFF($('#bc') ? $('#bc').value : ''),
+  offLookup: el => lookupOFF((el && el.dataset && el.dataset.code) || ($('#bc') ? $('#bc').value : '')),
+  customScan: el => customFoodSheet({ n: '', bc: (el && el.dataset && el.dataset.bc) || '' }, 'LABEL'),
+  addScan: () => {
+    if (!scanPending) return toast('没有待加入的扫码食物，先扫一次');
+    const g = +($('#addG') ? $('#addG').value : 0);
+    if (!(g > 0)) return toast('克数要大于 0');
+    const m = $('#addMeal') ? $('#addMeal').value : S.meal, d = ($('#addDate') ? $('#addDate').value : '') || S.date;
+    const f = Object.assign({}, scanPending);
+    scanPending = null;
+    upsertCustom(f);
+    addEntry(f, g, m, d);
+  },
+  editCustom: el => {
+    const f = state.custom.find(x => x.n === el.dataset.name) || DB.find(x => x.n === el.dataset.name && x.custom);
+    if (f) customFoodSheet(f, 'EDIT');
+  },
+  delCustom: el => {
+    const n = el.dataset.name;
+    if (!confirm('删除「' + n + '」？已加入记录的数值会保留。')) return;
+    state.custom = state.custom.filter(x => x.n !== n);
+    rebuildDB(); save(); closeSheet(); render(); toast('已删除：' + n);
+  },
   closeSheet: () => closeSheet(),
   cite: el => citeSheet(el.dataset.ids),
   allCites: () => allCitesSheet(),
@@ -2300,6 +2675,12 @@ const ACTIONS = {
   clearCal: () => { delete state.profile.tdeeBase; save(); render(); toast('已恢复自动估算'); },
   exportCSV: () => exportCSV(),
   exportJSON: () => exportJSON(),
+  exportJSONImg: () => exportJSONImages(),
+  imgStat: async () => { const s = await imgStats(); toast(s.off ? '本机不支持图片存储，扫码图不会保存' : '扫码图片 ' + s.n + ' 张 · ' + Math.round(s.bytes / 1024) + ' KB（存在 IndexedDB）'); },
+  imgClean: async () => {
+    if (!confirm('清理旧图片：保留最近 30 张，并保护正在使用的图。继续？')) return;
+    const n = await imgClearOld(30); toast('已清理 ' + n + ' 张旧图片');
+  },
   importJSON: () => importJSON(),
   resetAll: () => {
     if (!confirm('清空本机所有饮食、体重和自建食物？不可恢复。')) return;
@@ -2315,6 +2696,7 @@ const NAV = [
   ['history', '历史', 'M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16'],
   ['food', '食物', 'M5 8h14l-1.5 12H6.5z M9 8a3 3 0 0 1 6 0'],
   ['weight', '体重', 'M4 7h16v12H4z M8 11a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M9 11h.01'],
+  ['energy', '消耗', 'M4 9v6 M7 7v10 M17 7v10 M20 9v6 M7 12h10'],
   ['me', '我的', 'M12 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6 M5 20c1.5-4 4-5 7-5s5.5 1 7 5']
 ];
 function renderNav() {
@@ -2333,7 +2715,7 @@ function bindInputs() {
   });
 }
 function render() {
-  const map = { today: viewToday, history: viewHistory, food: viewFood, weight: viewWeight, me: viewMe };
+  const map = { today: viewToday, history: viewHistory, food: viewFood, weight: viewWeight, energy: viewEnergy, me: viewMe };
   let html;
   if (S.screen === 'energy') html = viewEnergy();
   else if (S.screen === 'plan') html = viewPlan();
@@ -2341,6 +2723,7 @@ function render() {
   $('#view').innerHTML = html;
   renderNav();
   bindInputs();
+  hydrateImgs();
   window.scrollTo(0, 0);
 }
 
@@ -2359,6 +2742,7 @@ function render() {
   });
   $('#overlay').addEventListener('click', closeSheet);
   render();
+  if (!('BarcodeDetector' in window) && 'requestIdleCallback' in window) requestIdleCallback(() => loadZXing().catch(() => { }), { timeout: 6000 });
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('./sw.js').catch(() => { });
   }

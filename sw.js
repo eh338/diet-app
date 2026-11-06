@@ -1,5 +1,5 @@
-const CACHE = 'diet-v3-13';
-const SHELL = ['./', './index.html', './data.js', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'diet-v3-15';
+const SHELL = ['./', './index.html', './pinyin.js', './data.js', './app.js', './zxing.min.js', './manifest.json', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
